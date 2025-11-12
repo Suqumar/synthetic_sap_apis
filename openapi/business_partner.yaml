@@ -1,0 +1,112 @@
+openapi: 3.0.0
+info:
+  title: "SAP S/4HANA: Business Partner (A_BusinessPartner)"
+  description: "A synthetic OpenAPI 3.0 specification for the SAP A_BusinessPartner OData API. For demonstration purposes."
+  version: "1.0.0"
+servers:
+  - url: "https://my-sap-sandbox.example.com/sap/opu/odata/sap/API_BUSINESS_PARTNER"
+    description: "Mock SAP Gateway Server"
+paths:
+  /A_BusinessPartner:
+    get:
+      summary: "Get a list of Business Partners"
+      operationId: "getBusinessPartnerList"
+      tags:
+        - "Business Partner"
+      parameters:
+        - name: "$top"
+          in: query
+          description: "Show only the first n items"
+          schema:
+            type: integer
+            format: int32
+        - name: "$skip"
+          in: query
+          description: "Skip the first n items"
+          schema:
+            type: integer
+            format: int32
+        - name: "$filter"
+          in: query
+          description: "Filter items by property"
+          schema:
+            type: string
+      responses:
+        "200":
+          description: "A list of business partners."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  d:
+                    type: object
+                    properties:
+                      results:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/A_BusinessPartnerType"
+  "/A_BusinessPartner('{BusinessPartnerID}')":
+    get:
+      summary: "Get a single Business Partner by ID"
+      operationId: "getBusinessPartnerById"
+      tags:
+        - "Business Partner"
+      parameters:
+        - $ref: "#/components/parameters/BusinessPartnerID"
+      responses:
+        "200":
+          description: "The requested Business Partner entity."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  d:
+                    $ref: "#/components/schemas/A_BusinessPartnerType"
+        "404":
+          description: "Business Partner not found."
+
+components:
+  schemas:
+    A_BusinessPartnerType:
+      type: "object"
+      title: "Business Partner"
+      properties:
+        BusinessPartner:
+          type: "string"
+          maxLength: 10
+          description: "Business Partner Number"
+        BusinessPartnerCategory:
+          type: "string"
+          maxLength: 1
+          description: "Category: 1 (Person), 2 (Organization), 3 (Group)"
+        BusinessPartnerUUID:
+          type: "string"
+          format: "uuid"
+        FirstName:
+          type: "string"
+          maxLength: 40
+        LastName:
+          type: "string"
+          maxLength: 40
+        OrganizationBPName1:
+          type: "string"
+          maxLength: 40
+          description: "Name 1 of organization"
+        CreationDate:
+          type: "string"
+          format: "date-time"
+        LastChangeDate:
+          type: "string"
+          format: "date-time"
+  parameters:
+    BusinessPartnerID:
+      name: "BusinessPartnerID"
+      in: path
+      description: "The 10-digit Business Partner ID."
+      required: true
+      schema:
+        type: "string"
+        maxLength: 10
+        pattern: '^[0-9]{10}$'
