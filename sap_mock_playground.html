@@ -1,0 +1,199 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SAP OpenAPI Mock Playground (Browser-Only)</title>
+  
+  <!-- Stoplight Elements: interactive API viewer -->
+  <script type="module" src="https://unpkg.com/@stoplight/elements/web-components.min.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/@stoplight/elements/styles.min.css" />
+  
+  <!--
+    FIX: Removed OasMock.
+    Going back to json-schema-faker, but using a specific version
+    that is a complete bundle and exists on the CDN.
+    This file (rc16) has no external dependencies.
+  -->
+  <script src="https://unpkg.com/json-schema-faker@0.5.0-rc16/dist/json-schema-faker.bundle.min.js"></script>
+  
+  <!-- JS-YAML for parsing YAML specs -->
+  <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
+  
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol"; background: #0b1020; color: #e8ecff; margin: 0; padding: 1rem; }
+    header { font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem; }
+    .controls { display: flex; margin-bottom: 1rem; }
+    input { flex-grow: 1; padding: 10px 12px; border-radius: 6px; border: 1px solid #444; background: #121833; color: #fff; font-size: 1rem; }
+    button { padding: 10px 16px; margin-left: 10px; background: #2563eb; border: none; border-radius: 6px; color: #fff; cursor: pointer; font-weight: 500; transition: background-color 0.2s; }
+    button:hover { background: #1d4ed8; }
+    button:disabled { background: #374151; cursor: not-allowed; }
+    pre { background: #0d1433; color: #d7e2ff; border: 1px solid #2a3a84; border-radius: 12px; padding: 16px; overflow: auto; margin-top: 1rem; min-height: 100px; line-height: 1.5; }
+    elements-api { height: 80vh; border-radius: 8px; overflow: hidden; }
+  </style>
+</head>
+<body>
+  <header>🚀 SAP OpenAPI Mock Playground</header>
+  
+  <div class="controls">
+    <input id="specUrl" type="text" value="https://petstore3.swagger.io/api/v3/openapi.json" />
+    <button id="loadSpec">Load Spec</button>
+    <button id="mockResponse" disabled>Generate Mock Response</button>
+  </div>
+  
+  <pre id="output">(mocked response will appear here)</pre>
+  
+  <elements-api id="elements" apiDescriptionUrl="https://petstore3.swagger.io/api/v3/openapi.json" router="hash"></elements-api>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let specCache = null;
+
+    // Helper to fetch and parse JSON or YAML
+    async function fetchSpec(url) {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`Failed to fetch spec: ${res.statusText}`);
+      const text = await res.text();
+      try { 
+        return JSON.parse(text); // Try JSON first
+      } catch (e) {
+        try {
+          return jsyaml.load(text); // Fallback to YAML
+        } catch (yamlError) {
+          throw new Error('Failed to parse spec. Not valid JSON or YAML.');
+        }
+      }
+    }
+
+    // Helper function to resolve $ref pointers within the same spec
+    function resolveRef(spec, ref) {
+      if (!ref || !ref.startsWith('#/')) {
+        // We only handle internal refs
+        return ref; 
+      }
+      const parts = ref.slice(2).split('/');
+      let current = spec;
+      for (const part of parts) {
+        if (current && typeof current === 'object' && part in current) {
+          current = current[part];
+        } else {
+          throw new Error(`Could not resolve $ref: ${ref}`);
+        }
+      }
+      return current;
+    }
+
+    // Tries to find the schema for the *first* response of the *first* operation
+    function getFirstResponseSchema(spec) {
+      if (!spec || !spec.paths) return null;
+      
+      const path = Object.keys(spec.paths)[0];
+      if (!path) return null;
+
+      const method = Object.keys(spec.paths[path])[0];
+      if (!method) return null;
+      
+      const op = spec.paths[path][method];
+      if (!op || !op.responses) return null;
+      
+      // Find first response code (e.g., '200', '201', 'default')
+      const respCode = Object.keys(op.responses)[0];
+      if (!respCode) return null;
+      
+      const resp = op.responses[respCode];
+      if (!resp || !resp.content) return null;
+      
+      // Find first content type (e.g., 'application/json')
+      const contentType = Object.keys(resp.content)[0];
+      if (!contentType) return null;
+      
+      let schema = resp.content[contentType].schema;
+      
+      // Resolve the schema if it's a $ref
+      if (schema && schema['$ref']) {
+        schema = resolveRef(spec, schema['$ref']);
+      }
+      
+      return schema;
+    }
+
+    // --- Event Listeners ---
+
+    $('loadSpec').onclick = async () => {
+      const url = $('specUrl').value.trim();
+      if (!url) return $('output').textContent = '⚠️ Please enter a URL.';
+      
+      $('output').textContent = 'Loading spec...';
+      try {
+        const spec = await fetchSpec(url);
+        specCache = spec;
+        $('elements').apiDescriptionDocument = spec; // Update Stoplight Elements
+        $('output').textContent = '✅ Spec loaded successfully. Ready to mock.';
+      } catch (err) {
+        console.error(err);
+        $('output').textContent = `❌ Load failed: ${err.message}`;
+      }
+    };
+
+    $('mockResponse').onclick = async () => {
+      if (!specCache) {
+        $('output').textContent = '⚠️ Load a spec first. Click "Load Spec".';
+        return;
+      }
+
+      // Check if the json-schema-faker library is loaded
+      // This older version uses a CAPITAL 'J'
+      const jsf = window.JSONSchemaFaker;
+      if (typeof jsf !== 'function') {
+         $('output').textContent = '❌ Mocking library (JSONSchemaFaker) is still loading or failed. Please wait a moment and try again.';
+         console.error("window.JSONSchemaFaker is not defined.");
+         return;
+      }
+      
+      $('output').textContent = 'Generating mock...';
+      try {
+        const schema = getFirstResponseSchema(specCache);
+        if (!schema) {
+          throw new Error('Could not find a valid response schema in the spec.');
+        }
+
+        // Configure and run the mocker
+        // This old version's API is slightly different
+        jsf.option({
+            alwaysFakeOptionals: true,
+            minItems: 1,
+            maxItems: 3
+        });
+        
+        // FIX: Was 'spec.components', changed to 'specCache.components'
+        // This version needs the spec's 'components' for $ref resolution
+        const mock = jsf(schema, specCache.components);
+        
+        $('output').textContent = JSON.stringify(mock, null, 2);
+      } catch (err) {
+        console.error(err);
+        $('output').textContent = `❌ Mock failed: ${err.message}`;
+      }
+    };
+
+    // Automatically load the default spec on page load
+    window.onload = () => {
+        $('loadSpec').click();
+        
+        // Check until jsonSchemaFaker is loaded, then enable the mock button
+        const checkJSFLoaded = setInterval(() => {
+            // This older version (0.5.0-rc16) uses a CAPITAL 'J'
+            // FIX: Corrected typo from JSONSchemaFFaker to JSONSchemaFaker
+            if (typeof window.JSONSchemaFaker === 'function') {
+                console.log('✅ JSONSchemaFaker loaded successfully, enabling mock button.');
+                $('mockResponse').disabled = false;
+                clearInterval(checkJSFLoaded);
+            } else {
+                console.log('Waiting for JSONSchemaFaker to load...');
+            }
+        }, 200); // Check every 200ms
+    };
+  </script>
+</body>
+</html>
